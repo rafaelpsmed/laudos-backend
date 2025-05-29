@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 from datetime import timedelta
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -25,8 +26,9 @@ SECRET_KEY = 'django-insecure-(r2q+z+d4s!@6@d544oc@3p&ygapp+s6!42mhlxdjaf81&ycl@
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
+# DEBUG = False
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['rafaelpsmed.pythonanywhere.com', 'localhost', '127.0.0.1']
 
 
 # Application definition
@@ -74,6 +76,9 @@ TEMPLATES = [
 WSGI_APPLICATION = 'laudos_backend.wsgi.application'
 
 
+STATIC_ROOT = os.path.join(BASE_DIR, 'static')
+
+
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
@@ -86,6 +91,14 @@ DATABASES = {
         'HOST': 'localhost',
         'PORT': '3306',
     }
+    # 'default': {
+    #     'ENGINE': 'django.db.backends.mysql',
+    #     'NAME': 'rafaelpsmed$laudos_db',
+    #     'USER': 'rafaelpsmed',  # Altere para seu usuário do MySQL
+    #     'PASSWORD': 'proview2',  # Altere para sua senha do MySQL
+    #     'HOST': 'rafaelpsmed.mysql.pythonanywhere-services.com',
+    #     'PORT': '3306',
+    # }
 }
 
 
@@ -170,6 +183,8 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",  # Frontend React em desenvolvimento
     "http://localhost:5173",  # Frontend Vite em desenvolvimento
     "http://127.0.0.1:5173",  # Frontend Vite em desenvolvimento
+    "https://laudos-frontend.vercel.app",  # Frontend em produção
+    "https://laudos-frontend-git-main-rafaelpsmed.vercel.app"  # Domínio alternativo do Vercel
 ]
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_METHODS = [

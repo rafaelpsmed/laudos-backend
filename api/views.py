@@ -34,12 +34,37 @@ class FraseViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = Frase.objects.all()
-        modelo_laudo_id = self.request.query_params.get('modelo_laudo_id', None)
+        categoria = self.request.query_params.get('categoria', None)
+        titulo_frase = self.request.query_params.get('titulo_frase', None)
         
-        if modelo_laudo_id:
-            queryset = queryset.filter(modelo_laudo_id=modelo_laudo_id)
+        if categoria and titulo_frase:
+            queryset = queryset.filter(
+                categoriaFrase=categoria,
+                tituloFrase=titulo_frase
+            )
             
         return queryset
+
+    @action(detail=False, methods=['get'])
+    def categorias_sem_metodos(self, request):
+        try:
+            # Busca categorias que não têm frases associadas a nenhum modelo
+            categorias = Frase.objects.filter(
+                modelos_laudo__isnull=True
+            ).values_list(
+                'categoriaFrase', 
+                flat=True
+            ).distinct()
+            
+            return Response({
+                'categorias': list(categorias)
+            })
+            
+        except Exception as e:
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     @action(detail=False, methods=['get'])
     def categorias(self, request):
@@ -54,7 +79,7 @@ class FraseViewSet(viewsets.ModelViewSet):
         try:
             # Busca categorias que têm frases associadas ao modelo
             categorias = Frase.objects.filter(
-                modelo_laudo_id=modelo_laudo_id
+                modelos_laudo__id=modelo_laudo_id
             ).values_list(
                 'categoriaFrase', 
                 flat=True
@@ -104,7 +129,6 @@ class FraseViewSet(viewsets.ModelViewSet):
     def frases(self, request):
         titulo_frase = request.query_params.get('titulo_frase', None)
         categoria = request.query_params.get('categoria', None)
-        modelo_laudo_id = request.query_params.get('modelo_laudo_id', None)
         
         if not titulo_frase or not categoria:
             return Response(
@@ -118,9 +142,6 @@ class FraseViewSet(viewsets.ModelViewSet):
                 tituloFrase=titulo_frase,
                 categoriaFrase=categoria
             )
-            
-            if modelo_laudo_id:
-                queryset = queryset.filter(modelo_laudo_id=modelo_laudo_id)
                 
             # Serializa as frases encontradas
             serializer = self.get_serializer(queryset, many=True)
