@@ -185,7 +185,8 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",  # Frontend Vite em desenvolvimento
     "http://127.0.0.1:5173",  # Frontend Vite em desenvolvimento
     "https://laudos-frontend.vercel.app",  # Frontend em produção
-    "https://laudos-frontend-git-main-rafaelpsmed.vercel.app"  # Domínio alternativo do Vercel
+    "https://laudos-frontend-git-main-rafaelpsmed.vercel.app",  # Domínio alternativo do Vercel
+    "https://laudos-frontend-orpin.vercel.app"  # Novo domínio do frontend
 ]
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_METHODS = [
