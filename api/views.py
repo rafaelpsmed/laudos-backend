@@ -3,6 +3,7 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import TokenError
 from .models import Metodo, ModeloLaudo, Frase, Variavel
 from .serializers import (
     MetodoSerializer, ModeloLaudoSerializer,
@@ -111,7 +112,7 @@ class FraseViewSet(viewsets.ModelViewSet):
             queryset = Frase.objects.filter(categoriaFrase=categoria)
             
             if modelo_laudo_id:
-                queryset = queryset.filter(modelo_laudo_id=modelo_laudo_id)
+                queryset = queryset.filter(modelos_laudo__id=modelo_laudo_id)
                 
             titulos = queryset.values_list('tituloFrase', flat=True).distinct()
             
@@ -216,3 +217,35 @@ class AuthViewSet(viewsets.ViewSet):
             'email': request.user.email,
             'nome_completo': request.user.nome_completo
         })
+
+    @action(detail=False, methods=['post'])
+    def refresh(self, request):
+        try:
+            refresh_token = request.data.get('refresh')
+            if not refresh_token:
+                return Response(
+                    {'error': 'Refresh token é obrigatório'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Valida o refresh token
+            refresh = RefreshToken(refresh_token)
+            
+            # Gera um novo access token
+            access_token = refresh.access_token
+            
+            return Response({
+                'access': str(access_token),
+                'refresh': str(refresh)
+            })
+            
+        except TokenError as e:
+            return Response(
+                {'error': 'Token inválido ou expirado'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        except Exception as e:
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

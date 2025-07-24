@@ -25,8 +25,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-(r2q+z+d4s!@6@d544oc@3p&ygapp+s6!42mhlxdjaf81&ycl@'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-# DEBUG = False
+DEBUG = False
+# DEBUG = True
 
 ALLOWED_HOSTS = ['rafaelpsmed.pythonanywhere.com', 'localhost', '127.0.0.1']
 
@@ -85,18 +85,19 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'static')
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'laudos_db',
-        'USER': 'root',  # Altere para seu usuário do MySQL
+        'NAME': 'rafaelpsmed$laudos_db',
+        'USER': 'rafaelpsmed',  # Altere para seu usuário do MySQL
         'PASSWORD': 'proview2',  # Altere para sua senha do MySQL
-        'HOST': 'localhost',
+        'HOST': 'rafaelpsmed.mysql.pythonanywhere-services.com',
         'PORT': '3306',
     }
+    # usado em desenvolvimento
     # 'default': {
     #     'ENGINE': 'django.db.backends.mysql',
-    #     'NAME': 'rafaelpsmed$laudos_db',
-    #     'USER': 'rafaelpsmed',  # Altere para seu usuário do MySQL
+    #     'NAME': 'laudos_db',
+    #     'USER': 'root',  # Altere para seu usuário do MySQL
     #     'PASSWORD': 'proview2',  # Altere para sua senha do MySQL
-    #     'HOST': 'rafaelpsmed.mysql.pythonanywhere-services.com',
+    #     'HOST': 'localhost',
     #     'PORT': '3306',
     # }
 }
