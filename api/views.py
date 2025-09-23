@@ -9,6 +9,7 @@ from .serializers import (
     MetodoSerializer, ModeloLaudoSerializer,
     FraseSerializer, VariavelSerializer, LoginSerializer, CustomUserSerializer
 )
+from .services import generate_radiology_report
 
 # Create your views here.
 
@@ -241,11 +242,75 @@ class AuthViewSet(viewsets.ViewSet):
             
         except TokenError as e:
             return Response(
-                {'error': 'Token inválido ou expirado'}, 
+                {'error': 'Token inválido ou expirado'},
                 status=status.HTTP_401_UNAUTHORIZED
             )
         except Exception as e:
             return Response(
-                {'error': str(e)}, 
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class IAViewSet(viewsets.ViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @action(detail=False, methods=['post'])
+    def gerar_laudo_radiologia(self, request):
+        """
+        Gera laudo radiológico usando IA baseada nas informações fornecidas
+        """
+        texto = request.data.get('texto', '').strip()
+
+        if not texto:
+            return Response(
+                {'error': 'Texto com informações do exame é obrigatório'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Prompt específico para laudos radiológicos conforme solicitado
+            prompt = f"""
+            Sou Radiologista e quero que vc me ajude a agilizar a minha confecção de laudos. Quando eu pedir para vc fazer um laudo, ele deve vim nesse formato:
+            Fonte de todo o texto: Arial 12
+            Se eu falar o nome do paciente, vc coloca antes de tudo Nome: e o nome que eu falar. Se eu não falar nada, não precisa colocar
+            Titulo em Negrito e Maiúsculo, centralizado
+            Depois vc escreve Indicação Clínica em negrito e maíusculo. Se nenhuma indicação for fornecida, vc coloca "Avaliação Clínica"
+            para colocar a técnica do exame, vc escreve TÉCNICA em negrito e maiúsculo, dois pontos e depois escreve a técnica do exame. em exames de ultrassonografia, descrever a técnica em modo B e apenas citar o uso ou não do estudo com doppler se for mencionado.
+            Depois coloca laudo: , em maiúsculo e negrito
+            No laudo deve ser colocada a descrição de todas as estruturas que a região estudada contém, e não apenas as alterações.
+            Depois o laudo, sem hífens ou bullets nos parágrafos. se for preciso, usar numeros para enumerar achados.
+            Depois vc escreve impressão diagnóstica: em negrito e maiúsculo e depois faz um resumo dos achados do laudo.
+            Cada achado deve ficar em uma linha separada e não é preciso repetir as medidas do achado na conclusão.
+            Na conclusão não é para colocar nenhuma medida
+
+            Considerações específicas para cada laudo:
+            1. Em laudos de ultrassonografia de mamas, as descrições dos nódulos devem seguir o léxico do birads. Deve-se colocar, abaixo da conclusão: BI-RADS: X (X é o birads do exame de acordo com os achados). Abaixo disso colocar as Recomendações de acordo com o BIRADS e com o documento do ACR BIRADS
+            2. não é para falar nada de próstata em ultrassonografia do aparelho urinário exceto se for dito o contrário
+            3. não falar de ligamentos cruzados e meniscos em ultrassonografia de joelho
+
+            Informações fornecidas pelo médico:
+            {texto}
+
+            Gere o laudo radiológico completo seguindo rigorosamente o formato especificado acima.
+            """
+
+            # Gera o laudo usando o serviço de IA
+            laudo_gerado = generate_radiology_report(prompt, service_name="openrouter")
+
+            if laudo_gerado and not laudo_gerado.startswith("Erro"):
+                return Response({
+                    'laudo': laudo_gerado
+                })
+            else:
+                return Response(
+                    {'error': laudo_gerado or 'Erro ao gerar laudo radiológico'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        except Exception as e:
+            print(f"Erro ao gerar laudo radiológico: {e}")
+            return Response(
+                {'error': 'Erro interno do servidor ao gerar laudo'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

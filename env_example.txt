@@ -1,0 +1,75 @@
+# =============================================================================
+# ARQUIVO DE EXEMPLO DE CONFIGURAÇÃO - LAUDOS BACKEND
+# =============================================================================
+# COPIE ESTE ARQUIVO PARA .env E PREENCHA COM SEUS VALORES REAIS
+# NUNCA COMMIT O ARQUIVO .env NO GIT!
+# =============================================================================
+
+# =============================================================================
+# CONFIGURAÇÕES DO DJANGO
+# =============================================================================
+
+# Chave secreta do Django (gere uma nova para produção!)
+SECRET_KEY=your-secret-key-here
+
+# Modo debug (sempre False em produção)
+DEBUG=True
+
+# Hosts permitidos (adicione apenas domínios confiáveis)
+ALLOWED_HOSTS=localhost,127.0.0.1
+
+# =============================================================================
+# CONFIGURAÇÕES DO BANCO DE DADOS
+# =============================================================================
+
+# Tipo do banco de dados
+DB_ENGINE=django.db.backends.mysql
+
+# Nome do banco de dados
+DB_NAME=your_database_name
+
+# Usuário do banco de dados
+DB_USER=your_database_user
+
+# Senha do banco de dados (USE UMA SENHA FORTE!)
+DB_PASSWORD=your_secure_database_password
+
+# Host do banco de dados
+DB_HOST=localhost
+
+# Porta do banco de dados
+DB_PORT=3306
+
+# =============================================================================
+# CONFIGURAÇÕES DAS APIS DE IA
+# =============================================================================
+# ATENÇÃO: Use apenas chaves de desenvolvimento/teste!
+# Em produção, considere usar AWS Secrets Manager, Azure Key Vault ou similar
+
+# OpenAI API Key
+OPENAI_API_KEY=your_openai_api_key_here
+
+# OpenRouter API Key
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+
+# Anthropic API Key
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
+# =============================================================================
+# CONFIGURAÇÕES ADICIONAIS (OPCIONAIS)
+# =============================================================================
+
+# Configurações de email
+# EMAIL_HOST=smtp.gmail.com
+# EMAIL_PORT=587
+# EMAIL_USE_TLS=True
+# EMAIL_HOST_USER=your_email@gmail.com
+# EMAIL_HOST_PASSWORD=your_app_password
+
+# Configurações de cache
+# REDIS_URL=redis://localhost:6379/0
+# CACHE_URL=redis://localhost:6379/1
+
+# Configurações de logging
+# LOG_LEVEL=INFO
+# LOG_FILE=/var/log/laudos_backend.log

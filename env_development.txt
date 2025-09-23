@@ -1,0 +1,22 @@
+# =============================================================================
+# CONFIGURAÇÕES PARA DESENVOLVIMENTO
+# =============================================================================
+# RENOMEIE ESTE ARQUIVO PARA .env PARA USÁ-LO
+
+# Configurações básicas para desenvolvimento
+SECRET_KEY=django-insecure-dev-key-change-in-production
+DEBUG=True
+ALLOWED_HOSTS=localhost,127.0.0.1,127.0.0.1:3000,localhost:3000
+
+# Banco de dados MySQL para desenvolvimento
+DB_ENGINE=django.db.backends.mysql
+DB_NAME=laudos_db
+DB_USER=root
+DB_PASSWORD=proview2
+DB_HOST=localhost
+DB_PORT=3306
+
+# APIs (desabilitadas por padrão - adicione suas chaves se necessário)
+OPENAI_API_KEY=
+OPENROUTER_API_KEY=
+ANTHROPIC_API_KEY=

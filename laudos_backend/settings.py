@@ -13,22 +13,85 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 from pathlib import Path
 from datetime import timedelta
 import os
+import sys
+
+# =============================================================================
+# CARREGAMENTO SEGURO DE VARIÁVEIS DE AMBIENTE
+# =============================================================================
+
+# Carregar variáveis de ambiente
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    print("Arquivo .env carregado com sucesso")
+except ImportError:
+    print("Biblioteca python-dotenv nao instalada. Usando variaveis de ambiente do sistema.")
+except FileNotFoundError:
+    print("Arquivo .env nao encontrado. Usando variaveis de ambiente do sistema.")
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# =============================================================================
+# VALIDAÇÃO E CONFIGURAÇÃO DE VARIÁVEIS DE AMBIENTE
+# =============================================================================
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
+def get_env_var(var_name, default_value=None, required=False, secure=False):
+    """
+    Função segura para obter variáveis de ambiente
+    - var_name: nome da variável
+    - default_value: valor padrão se não encontrar
+    - required: se True, lança erro se não encontrar
+    - secure: se True, oculta o valor nos logs
+    """
+    value = os.getenv(var_name, default_value)
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-(r2q+z+d4s!@6@d544oc@3p&ygapp+s6!42mhlxdjaf81&ycl@'
+    if required and value is None:
+        raise ValueError(f"Variável de ambiente obrigatória não encontrada: {var_name}")
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
-# DEBUG = True
+    if secure and value:
+        # Mostra apenas os primeiros caracteres para logs
+        display_value = f"{value[:8]}..." if len(value) > 8 else "****"
+        print(f"[OK] {var_name}: {display_value}")
+    elif value:
+        print(f"[OK] {var_name}: {value}")
+    else:
+        print(f"[AVISO] {var_name}: nao configurado (usando padrao: {default_value})")
 
-ALLOWED_HOSTS = ['rafaelpsmed.pythonanywhere.com', 'localhost', '127.0.0.1']
+    return value
+
+# =============================================================================
+# CONFIGURAÇÕES DE SEGURANÇA BÁSICAS
+# =============================================================================
+
+# SECRET_KEY - OBRIGATÓRIA
+SECRET_KEY = get_env_var(
+    'SECRET_KEY',
+    'django-insecure-change-this-in-production-to-a-secure-random-key',
+    required=True,
+    secure=True
+)
+
+# DEBUG - Sempre False em produção por segurança
+DEBUG = get_env_var('DEBUG', 'False').lower() in ('true', '1', 'yes', 'on')
+
+# ALLOWED_HOSTS - Lista de hosts permitidos
+allowed_hosts_str = get_env_var('ALLOWED_HOSTS', 'localhost,127.0.0.1')
+ALLOWED_HOSTS = [host.strip() for host in allowed_hosts_str.split(',') if host.strip()]
+
+# Em produção, DEBUG deve ser False
+if not DEBUG:
+    # Configurações adicionais de segurança para produção
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_HSTS_SECONDS = 31536000  # 1 ano
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    # Comente as linhas abaixo se estiver em desenvolvimento
+    # SECURE_SSL_REDIRECT = True
+    # SESSION_COOKIE_SECURE = True
+    # CSRF_COOKIE_SECURE = True
+    # SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 
 # Application definition
@@ -79,28 +142,48 @@ WSGI_APPLICATION = 'laudos_backend.wsgi.application'
 STATIC_ROOT = os.path.join(BASE_DIR, 'static')
 
 
-# Database
-# https://docs.djangoproject.com/en/5.2/ref/settings/#databases
+# =============================================================================
+# CONFIGURAÇÃO SEGURO DO BANCO DE DADOS
+# =============================================================================
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'rafaelpsmed$laudos_db',
-        'USER': 'rafaelpsmed',  # Altere para seu usuário do MySQL
-        'PASSWORD': 'proview2',  # Altere para sua senha do MySQL
-        'HOST': 'rafaelpsmed.mysql.pythonanywhere-services.com',
-        'PORT': '3306',
+        'ENGINE': get_env_var('DB_ENGINE', 'django.db.backends.sqlite3'),
+        'NAME': get_env_var('DB_NAME', BASE_DIR / 'db.sqlite3'),
+        'USER': get_env_var('DB_USER', ''),
+        'PASSWORD': get_env_var('DB_PASSWORD', '', secure=True),
+        'HOST': get_env_var('DB_HOST', ''),
+        'PORT': get_env_var('DB_PORT', ''),
+        'OPTIONS': {
+            # Configurações adicionais de segurança para MySQL
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+        } if get_env_var('DB_ENGINE', '').endswith('mysql') else {},
     }
-    # usado em desenvolvimento
-    # 'default': {
-    #     'ENGINE': 'django.db.backends.mysql',
-    #     'NAME': 'laudos_db',
-    #     'USER': 'root',  # Altere para seu usuário do MySQL
-    #     'PASSWORD': 'proview2',  # Altere para sua senha do MySQL
-    #     'HOST': 'localhost',
-    #     'PORT': '3306',
-    # }
 }
+
+# Validação da configuração do banco de dados
+if DATABASES['default']['ENGINE'] == 'django.db.backends.mysql':
+    required_db_vars = ['DB_NAME', 'DB_USER', 'DB_PASSWORD']
+    missing_vars = []
+
+    for var in required_db_vars:
+        if not os.getenv(var):
+            missing_vars.append(var)
+
+    if missing_vars:
+        print(f"[AVISO] Variaveis obrigatorias nao configuradas: {', '.join(missing_vars)}")
+        print("Usando SQLite como fallback para desenvolvimento.")
+        DATABASES['default'] = {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    else:
+        print("Configuracao MySQL detectada e validada.")
+        # Configurações específicas para MySQL
+        DATABASES['default']['OPTIONS'] = {
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+            'charset': 'utf8mb4',
+        }
 
 
 # Password validation
@@ -177,17 +260,22 @@ SIMPLE_JWT = {
     'JTI_CLAIM': 'jti',
 }
 
-# Configurações de CORS
-CORS_ALLOW_ALL_ORIGINS = False  # Desativa o acesso de qualquer origem
+# =============================================================================
+# CONFIGURAÇÕES DE CORS (ATUALIZADAS)
+# =============================================================================
+
+# Configurações básicas de CORS
+CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # Frontend React em desenvolvimento
-    "http://127.0.0.1:3000",  # Frontend React em desenvolvimento
-    "http://localhost:5173",  # Frontend Vite em desenvolvimento
-    "http://127.0.0.1:5173",  # Frontend Vite em desenvolvimento
+    "http://localhost:3000",      # Frontend React em desenvolvimento
+    "http://127.0.0.1:3000",     # Frontend React em desenvolvimento
+    "http://localhost:5173",     # Frontend Vite em desenvolvimento
+    "http://127.0.0.1:5173",     # Frontend Vite em desenvolvimento
     "https://laudos-frontend.vercel.app",  # Frontend em produção
-    "https://laudos-frontend-git-main-rafaelpsmed.vercel.app",  # Domínio alternativo do Vercel
-    "https://laudos-frontend-orpin.vercel.app"  # Novo domínio do frontend
+    "https://laudos-frontend-git-main-rafaelpsmed.vercel.app",
+    "https://laudos-frontend-orpin.vercel.app"
 ]
+
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_METHODS = [
     'DELETE',
@@ -197,6 +285,7 @@ CORS_ALLOW_METHODS = [
     'POST',
     'PUT',
 ]
+
 CORS_ALLOW_HEADERS = [
     'accept',
     'accept-encoding',
@@ -207,11 +296,75 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
-    'access-control-allow-origin',
-    'access-control-allow-headers',
-    'access-control-allow-methods',
-    'access-control-allow-credentials',
+    'x-requested-with',
 ]
+
+# Configurações adicionais para resolver problemas de CORS
+CORS_EXPOSE_HEADERS = ['content-type', 'x-csrftoken']
+CORS_PREFLIGHT_MAX_AGE = 86400  # Cache preflight por 24 horas
+
+# Resolver problema de redirects em preflight
+APPEND_SLASH = False  # Evita redirects automáticos que causam problemas no CORS
+
+# =============================================================================
+# CONFIGURAÇÕES DAS APIS DE IA (SEGURAS)
+# =============================================================================
+
+# Configuração da OpenAI
+OPENAI_API_KEY = get_env_var('OPENAI_API_KEY', '', secure=True)
+
+# Configuração do OpenRouter
+OPENROUTER_API_KEY = get_env_var('OPENROUTER_API_KEY', '', secure=True)
+
+# Configuração do Claude (Anthropic)
+ANTHROPIC_API_KEY = get_env_var('ANTHROPIC_API_KEY', '', secure=True)
+
+# =============================================================================
+# CONFIGURAÇÕES ADICIONAIS DE SEGURANÇA
+# =============================================================================
 
 # Configuração do modelo de usuário personalizado
 AUTH_USER_MODEL = 'api.CustomUser'
+
+# Configurações de segurança para sessões e cookies
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
+# Configurações de rate limiting (opcional)
+# REST_FRAMEWORK['DEFAULT_THROTTLE_CLASSES'] = [
+#     'rest_framework.throttling.AnonRateThrottle',
+#     'rest_framework.throttling.UserRateThrottle'
+# ]
+# REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
+#     'anon': '100/hour',
+#     'user': '1000/hour'
+# }
+
+# =============================================================================
+# VALIDAÇÃO FINAL DE SEGURANÇA
+# =============================================================================
+
+# Validação de configurações críticas
+if DEBUG:
+    print("MODO DESENVOLVIMENTO ATIVADO")
+    print("Lista de verificacao de seguranca:")
+    print(f"   - SECRET_KEY configurada: {'SIM' if SECRET_KEY != 'django-insecure-change-this-in-production-to-a-secure-random-key' else 'NAO'}")
+    print(f"   - DEBUG desabilitado: {'SIM' if not DEBUG else 'NAO'}")
+    print(f"   - ALLOWED_HOSTS configurados: {len(ALLOWED_HOSTS)} hosts")
+    print(f"   - Banco de dados: {DATABASES['default']['ENGINE'].split('.')[-1]}")
+
+    # Validação das APIs de IA
+    apis_configured = []
+    if OPENAI_API_KEY: apis_configured.append("OpenAI")
+    if OPENROUTER_API_KEY: apis_configured.append("OpenRouter")
+    if ANTHROPIC_API_KEY: apis_configured.append("Anthropic")
+
+    if apis_configured:
+        print(f"   - APIs configuradas: {', '.join(apis_configured)}")
+    else:
+        print("   - Nenhuma API de IA configurada")
+
+print("\n" + "="*60)
+print("SERVIDOR DJANGO INICIADO COM SUCESSO")
+print("="*60)

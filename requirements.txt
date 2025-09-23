@@ -1,0 +1,24 @@
+# Django e dependências principais
+Django==5.2
+djangorestframework==3.15.2
+django-cors-headers==4.4.0
+djangorestframework-simplejwt==5.3.0
+
+# Segurança e variáveis de ambiente
+python-dotenv==1.1.1
+
+# Banco de dados
+PyMySQL==1.1.1
+
+# APIs de IA
+openai==1.54.4
+anthropic==0.34.2
+
+# Utilitários
+requests==2.31.0
+
+# Cache (opcional)
+redis==5.0.1  # Para Redis como backend de cache
+
+# Desenvolvimento (remover em produção)
+# django-debug-toolbar==4.2.0
