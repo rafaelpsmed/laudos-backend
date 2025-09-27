@@ -7,7 +7,7 @@ djangorestframework-simplejwt==5.3.0
 # Segurança e variáveis de ambiente
 python-dotenv==1.1.1
 
-# Banco de dados
+# Banco de dados MySQL para PythonAnywhere
 PyMySQL==1.1.1
 
 # APIs de IA
@@ -17,8 +17,5 @@ anthropic==0.34.2
 # Utilitários
 requests==2.31.0
 
-# Cache (opcional)
-redis==5.0.1  # Para Redis como backend de cache
-
-# Desenvolvimento (remover em produção)
-# django-debug-toolbar==4.2.0
+# Para produção no PythonAnywhere
+whitenoise==6.6.0

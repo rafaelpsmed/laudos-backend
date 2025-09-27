@@ -129,6 +129,7 @@ dmypy.json
 .env
 .env.local
 .env.production
+.env_production
 .env.staging
 .env.development
 secrets.json
