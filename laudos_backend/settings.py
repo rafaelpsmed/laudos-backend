@@ -273,7 +273,8 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",     # Frontend Vite em desenvolvimento
     "https://laudos-frontend.vercel.app",  # Frontend em produção
     "https://laudos-frontend-git-main-rafaelpsmed.vercel.app",
-    "https://laudos-frontend-orpin.vercel.app"
+    "https://laudos-frontend-orpin.vercel.app",
+    "https://rafaelpsmed.pythonanywhere.com"  # Backend PythonAnywhere
 ]
 
 CORS_ALLOW_CREDENTIALS = True
