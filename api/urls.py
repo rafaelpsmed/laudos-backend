@@ -7,9 +7,9 @@ from .views import (
 
 router = DefaultRouter()
 router.register(r'metodos', MetodoViewSet)
-router.register(r'modelo_laudo', ModeloLaudoViewSet)
+router.register(r'modelo_laudo', ModeloLaudoViewSet, basename='modelo_laudo')
 router.register(r'frases', FraseViewSet, basename='frases')
-router.register(r'variaveis', VariavelViewSet)
+router.register(r'variaveis', VariavelViewSet, basename='variaveis')
 router.register(r'auth', AuthViewSet, basename='auth')
 router.register(r'ia', IAViewSet, basename='ia')
 

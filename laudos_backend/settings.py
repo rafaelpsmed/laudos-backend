@@ -304,8 +304,8 @@ CORS_ALLOW_HEADERS = [
 CORS_EXPOSE_HEADERS = ['content-type', 'x-csrftoken']
 CORS_PREFLIGHT_MAX_AGE = 86400  # Cache preflight por 24 horas
 
-# Resolver problema de redirects em preflight
-APPEND_SLASH = False  # Evita redirects automáticos que causam problemas no CORS
+# Permitir redirects automáticos (necessário para custom actions do DRF)
+APPEND_SLASH = True
 
 # =============================================================================
 # CONFIGURAÇÕES DAS APIS DE IA (SEGURAS)
