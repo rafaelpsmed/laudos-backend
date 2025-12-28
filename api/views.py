@@ -9,7 +9,7 @@ from .serializers import (
     MetodoSerializer, ModeloLaudoSerializer,
     FraseSerializer, VariavelSerializer, LoginSerializer, CustomUserSerializer
 )
-from .services import generate_radiology_report
+from .services import generate_radiology_report, GroqService
 
 # Create your views here.
 
@@ -365,6 +365,73 @@ class VariavelViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(tituloVariavel=titulo)
         return queryset
 
+    def update(self, request, *args, **kwargs):
+        """
+        Atualiza uma variável e, se o título mudou, atualiza todas as frases
+        que usam essa variável.
+        """
+        instance = self.get_object()
+        titulo_antigo = instance.tituloVariavel
+        titulo_novo = request.data.get('tituloVariavel', titulo_antigo)
+        
+        # Chama o método update padrão
+        response = super().update(request, *args, **kwargs)
+        
+        # Se o título mudou, atualiza todas as frases que usam essa variável
+        if titulo_antigo != titulo_novo and response.status_code == status.HTTP_200_OK:
+            try:
+                frases_atualizadas = self._atualizar_frases_com_variavel(
+                    titulo_antigo, 
+                    titulo_novo, 
+                    request.user
+                )
+                
+                # Adiciona informação sobre as frases atualizadas na resposta
+                response.data['frases_atualizadas'] = frases_atualizadas
+                response.data['mensagem'] = (
+                    f'Variável atualizada com sucesso! '
+                    f'{frases_atualizadas} frase(s) foram atualizada(s) automaticamente.'
+                )
+            except Exception as e:
+                # Log do erro mas não falha a atualização da variável
+                # print(f'Erro ao atualizar frases com variável: {e}')
+                response.data['aviso'] = (
+                    'Variável atualizada, mas houve um erro ao atualizar as frases. '
+                    'Algumas frases podem ainda usar o título antigo.'
+                )
+        
+        return response
+
+    def _atualizar_frases_com_variavel(self, titulo_antigo, titulo_novo, usuario):
+        """
+        Atualiza todas as frases do usuário que contêm a variável com o título antigo.
+        Retorna o número de frases atualizadas.
+        """
+        # Padrão a ser procurado: {tituloAntigo}
+        padrao_antigo = f'{{{titulo_antigo}}}'
+        padrao_novo = f'{{{titulo_novo}}}'
+        
+        # Busca todas as frases do usuário
+        frases = Frase.objects.filter(usuario=usuario)
+        
+        frases_atualizadas = 0
+        
+        for frase in frases:
+            # Verifica se a frase contém o padrão antigo no campo fraseBase
+            frase_base = frase.frase.get('fraseBase', '')
+            
+            if padrao_antigo in frase_base:
+                # Substitui todas as ocorrências do padrão antigo pelo novo
+                nova_frase_base = frase_base.replace(padrao_antigo, padrao_novo)
+                
+                # Atualiza o campo fraseBase
+                frase.frase['fraseBase'] = nova_frase_base
+                frase.save()
+                
+                frases_atualizadas += 1
+        
+        return frases_atualizadas
+
 class AuthViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['post'])
     def register(self, request):
@@ -501,8 +568,44 @@ class IAViewSet(viewsets.ViewSet):
                 )
 
         except Exception as e:
-            print(f"Erro ao gerar laudo radiológico: {e}")
+            # print(f"Erro ao gerar laudo radiológico: {e}")
             return Response(
                 {'error': 'Erro interno do servidor ao gerar laudo'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'])
+    def corrigir_texto(self, request):
+        """
+        Corrige texto transcrito usando Groq
+        Especializado em correção de transcrições de laudos médicos radiológicos
+        """
+        texto = request.data.get('texto', '').strip()
+        deve_capitalizar = request.data.get('deve_capitalizar', False)
+
+        if not texto:
+            return Response(
+                {'error': 'Texto é obrigatório'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            groq_service = GroqService()
+            texto_corrigido = groq_service.correct_text(texto, deve_capitalizar)
+
+            if texto_corrigido:
+                return Response({
+                    'texto_corrigido': texto_corrigido
+                })
+            else:
+                return Response(
+                    {'error': 'Erro ao corrigir texto'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        except Exception as e:
+            # print(f"Erro ao corrigir texto: {e}")
+            return Response(
+                {'error': 'Erro interno do servidor ao corrigir texto'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

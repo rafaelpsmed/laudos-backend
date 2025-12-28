@@ -30,11 +30,11 @@ class AIService:
             if response.status_code == 200:
                 return response.json()
             else:
-                print(f"Erro na API: {response.status_code} - {response.text}")
+                # print(f"Erro na API: {response.status_code} - {response.text}")
                 return None
 
         except Exception as e:
-            print(f"Erro na requisição: {e}")
+            # print(f"Erro na requisição: {e}")
             return None
 
 
@@ -121,6 +121,56 @@ class AnthropicService(AIService):
         return None
 
 
+class GroqService(AIService):
+    """Serviço para integração com Groq"""
+
+    def __init__(self):
+        super().__init__(
+            api_key=settings.GROQ_API_KEY,
+            base_url="https://api.groq.com/openai/v1"
+        )
+
+    def correct_text(self, texto, deve_capitalizar=False):
+        """
+        Corrige texto transcrito usando Groq
+        Especializado em correção de transcrições de laudos médicos radiológicos
+        """
+        system_prompt = """Você é um assistente especialista em corrigir transcrições de laudos médicos radiológicos em português. 
+Sua tarefa é apenas pontuar corretamente, e corrigir a gramática e os termos técnicos radiológicos do texto fornecido.
+Regras:
+1. NÃO adicione nenhum texto extra, explicação ou "Aqui está". Retorne APENAS o texto corrigido.
+2. Mantenha o sentido técnico médico e radiológico.
+3. Insira vírgulas, pontos e outros sinais de pontuação onde gramaticalmente necessário.
+4. As medidas devem ser em centímetros, a menos que seja especificado outro tipo de medida, e devem estar no seguinte formato: A x B cm (A e B são as medidas). Ordenar as medidas da maior para a menor.
+5. Se o usuário pedir uma descrição detalhada de uma estrutura ou alteração patológica, deve ser colocada a descrição detalhada da estrutura e/ou da alteração.
+6. {capitalizacao}"""
+
+        capitalizacao_texto = 'Comece a frase com letra Maiúscula.' if deve_capitalizar else 'Mantenha a caixa alta/baixa original da primeira palavra, a menos que seja nome próprio.'
+        system_prompt = system_prompt.format(capitalizacao=capitalizacao_texto)
+
+        data = {
+            "model": "openai/gpt-oss-120b",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": texto
+                }
+            ],
+            "temperature": 0.1,
+            "max_tokens": 1024
+        }
+
+        response = self.make_request("chat/completions", data)
+
+        if response and 'choices' in response and len(response['choices']) > 0:
+            return response['choices'][0]['message']['content'].strip()
+        return None
+
+
 def get_ai_service(service_name="openai"):
     """
     Retorna o serviço de IA apropriado baseado na configuração
@@ -200,7 +250,7 @@ def generate_medical_text(prompt, service_name="openrouter", use_medical_context
         return "Erro: Não foi possível gerar a resposta médica."
 
     except Exception as e:
-        print(f"Erro no serviço de IA: {e}")
+        # print(f"Erro no serviço de IA: {e}")
         return f"Erro: {str(e)}"
 
 
@@ -218,7 +268,8 @@ def validate_api_keys():
     apis_status = {
         "openai": bool(settings.OPENAI_API_KEY),
         "openrouter": bool(settings.OPENROUTER_API_KEY),
-        "anthropic": bool(settings.ANTHROPIC_API_KEY)
+        "anthropic": bool(settings.ANTHROPIC_API_KEY),
+        "groq": bool(settings.GROQ_API_KEY)
     }
 
     return apis_status

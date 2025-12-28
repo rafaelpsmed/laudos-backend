@@ -317,6 +317,9 @@ OPENROUTER_API_KEY = get_env_var('OPENROUTER_API_KEY', '', secure=True)
 # Configuração do Claude (Anthropic)
 ANTHROPIC_API_KEY = get_env_var('ANTHROPIC_API_KEY', '', secure=True)
 
+# Configuração do Groq
+GROQ_API_KEY = get_env_var('GROQ_API_KEY', '', secure=True)
+
 # =============================================================================
 # CONFIGURAÇÕES ADICIONAIS DE SEGURANÇA
 # =============================================================================
@@ -357,6 +360,7 @@ if DEBUG:
     if OPENAI_API_KEY: apis_configured.append("OpenAI")
     if OPENROUTER_API_KEY: apis_configured.append("OpenRouter")
     if ANTHROPIC_API_KEY: apis_configured.append("Anthropic")
+    if GROQ_API_KEY: apis_configured.append("Groq")
 
     if apis_configured:
         print(f"   - APIs configuradas: {', '.join(apis_configured)}")
