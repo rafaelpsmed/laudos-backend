@@ -1,4 +1,5 @@
 from django.shortcuts import render
+import logging
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -9,7 +10,19 @@ from .serializers import (
     MetodoSerializer, ModeloLaudoSerializer,
     FraseSerializer, VariavelSerializer, LoginSerializer, CustomUserSerializer
 )
-from .services import generate_radiology_report, GroqService
+from .services import (
+    generate_or_edit_radiology_report,
+    GroqService,
+    APIKeyMissingError,
+    ia_error_http_status,
+    normalize_chat_history,
+    get_frases_for_modelo,
+    build_frase_catalog_entry,
+    match_frases_from_chat,
+)
+from .models import ModeloLaudo
+
+logger = logging.getLogger(__name__)
 
 # Create your views here.
 
@@ -517,9 +530,15 @@ class IAViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['post'])
     def gerar_laudo_radiologia(self, request):
         """
-        Gera laudo radiológico usando IA baseada nas informações fornecidas
+        Gera ou edita laudo radiológico usando IA.
+        Se laudo_atual estiver presente, aplica edição incremental.
         """
         texto = request.data.get('texto', '').strip()
+        laudo_atual = request.data.get('laudo_atual', '').strip()
+        historico = normalize_chat_history(request.data.get('historico'))
+        modo_catalogo = bool(request.data.get('modo_catalogo'))
+        frases_aplicadas = request.data.get('frases_aplicadas') or []
+        pedido_complementar = request.data.get('pedido_complementar', '').strip()
 
         if not texto:
             return Response(
@@ -528,50 +547,120 @@ class IAViewSet(viewsets.ViewSet):
             )
 
         try:
-            # Prompt específico para laudos radiológicos conforme solicitado
-            prompt = f"""
-            Sou Radiologista e quero que vc me ajude a agilizar a minha confecção de laudos. Quando eu pedir para vc fazer um laudo, ele deve vim nesse formato:
-            Fonte de todo o texto: Arial 12
-            Se eu falar o nome do paciente, vc coloca antes de tudo Nome: e o nome que eu falar. Se eu não falar nada, não precisa colocar
-            Titulo em Negrito e Maiúsculo, centralizado
-            Depois vc escreve Indicação Clínica em negrito e maíusculo. Se nenhuma indicação for fornecida, vc coloca "Avaliação Clínica"
-            para colocar a técnica do exame, vc escreve TÉCNICA em negrito e maiúsculo, dois pontos e depois escreve a técnica do exame. em exames de ultrassonografia, descrever a técnica em modo B e apenas citar o uso ou não do estudo com doppler se for mencionado.
-            Depois coloca laudo: , em maiúsculo e negrito
-            No laudo deve ser colocada a descrição de todas as estruturas que a região estudada contém, e não apenas as alterações.
-            Depois o laudo, sem hífens ou bullets nos parágrafos. se for preciso, usar numeros para enumerar achados.
-            Depois vc escreve impressão diagnóstica: em negrito e maiúsculo e depois faz um resumo dos achados do laudo.
-            Cada achado deve ficar em uma linha separada e não é preciso repetir as medidas do achado na conclusão.
-            Na conclusão não é para colocar nenhuma medida
-
-            Considerações específicas para cada laudo:
-            1. Em laudos de ultrassonografia de mamas, as descrições dos nódulos devem seguir o léxico do birads. Deve-se colocar, abaixo da conclusão: BI-RADS: X (X é o birads do exame de acordo com os achados). Abaixo disso colocar as Recomendações de acordo com o BIRADS e com o documento do ACR BIRADS
-            2. não é para falar nada de próstata em ultrassonografia do aparelho urinário exceto se for dito o contrário
-            3. não falar de ligamentos cruzados e meniscos em ultrassonografia de joelho
-
-            Informações fornecidas pelo médico:
-            {texto}
-
-            Gere o laudo radiológico completo seguindo rigorosamente o formato especificado acima.
-            """
-
-            # Gera o laudo usando o serviço de IA
-            laudo_gerado = generate_radiology_report(prompt, service_name="openrouter")
+            laudo_gerado, modo = generate_or_edit_radiology_report(
+                user_text=texto,
+                laudo_atual=laudo_atual,
+                historico=historico,
+                service_name="openrouter",
+                modo_catalogo=modo_catalogo,
+                frases_aplicadas=frases_aplicadas,
+                pedido_complementar=pedido_complementar,
+            )
 
             if laudo_gerado and not laudo_gerado.startswith("Erro"):
-                return Response({
-                    'laudo': laudo_gerado
-                })
-            else:
-                return Response(
-                    {'error': laudo_gerado or 'Erro ao gerar laudo radiológico'},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
+                payload = {
+                    'laudo': laudo_gerado,
+                    'modo': modo,
+                }
+                if modo_catalogo:
+                    payload['acrescimos'] = laudo_gerado
+                    payload['modo'] = 'complementar'
+                return Response(payload)
 
-        except Exception as e:
-            # print(f"Erro ao gerar laudo radiológico: {e}")
+            error_msg = laudo_gerado or 'Erro ao gerar laudo radiológico'
+            return Response(
+                {'error': error_msg.replace('Erro: ', '', 1) if error_msg.startswith('Erro: ') else error_msg},
+                status=ia_error_http_status(error_msg),
+            )
+
+        except APIKeyMissingError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except Exception:
+            logger.exception("Erro ao gerar laudo radiológico")
             return Response(
                 {'error': 'Erro interno do servidor ao gerar laudo'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'])
+    def resolver_frases(self, request):
+        """
+        Interpreta pedido do chat e retorna IDs de frases cadastradas a aplicar.
+        """
+        modelo_id = request.data.get('modelo_id')
+        texto = request.data.get('texto', '').strip()
+        historico = normalize_chat_history(request.data.get('historico'))
+
+        if not modelo_id:
+            return Response(
+                {'error': 'modelo_id é obrigatório'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not texto:
+            return Response(
+                {'error': 'Texto do pedido é obrigatório'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            modelo = ModeloLaudo.objects.get(id=modelo_id, usuario=request.user)
+        except ModeloLaudo.DoesNotExist:
+            return Response(
+                {'error': 'Modelo não encontrado'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            frases = get_frases_for_modelo(request.user, modelo)
+            catalog = [build_frase_catalog_entry(f) for f in frases]
+            catalog_by_id = {f.id: f for f in frases}
+
+            resultado = match_frases_from_chat(
+                user_text=texto,
+                catalog_entries=catalog,
+                historico=historico,
+                service_name='openrouter',
+            )
+
+            if resultado.get('error'):
+                return Response(
+                    {'error': resultado['error']},
+                    status=ia_error_http_status(resultado['error']),
+                )
+
+            frases_resposta = []
+            for item in resultado.get('frases', []):
+                frase_obj = catalog_by_id.get(item['id'])
+                if not frase_obj:
+                    continue
+                frases_resposta.append({
+                    **item,
+                    'tituloFrase': frase_obj.tituloFrase,
+                    'categoriaFrase': frase_obj.categoriaFrase,
+                    'frase': frase_obj.frase,
+                })
+
+            return Response({
+                'frases': frases_resposta,
+                'pedido_complementar': resultado.get('pedido_complementar', ''),
+                'mensagem_assistente': resultado.get('mensagem_assistente', ''),
+                'catalogo_total': len(catalog),
+            })
+
+        except APIKeyMissingError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except Exception:
+            logger.exception('Erro ao resolver frases')
+            return Response(
+                {'error': 'Erro interno ao interpretar frases'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
     @action(detail=False, methods=['post'])
@@ -598,13 +687,19 @@ class IAViewSet(viewsets.ViewSet):
                     'texto_corrigido': texto_corrigido
                 })
             else:
+                detail = groq_service.api_error_message()
                 return Response(
-                    {'error': 'Erro ao corrigir texto'},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    {'error': detail},
+                    status=status.HTTP_502_BAD_GATEWAY,
                 )
 
+        except APIKeyMissingError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         except Exception as e:
-            # print(f"Erro ao corrigir texto: {e}")
+            logger.exception("Erro ao corrigir texto")
             return Response(
                 {'error': 'Erro interno do servidor ao corrigir texto'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

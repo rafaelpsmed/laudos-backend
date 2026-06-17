@@ -42,10 +42,18 @@ class FraseSerializer(serializers.ModelSerializer):
         queryset=ModeloLaudo.objects.all(),
         required=False
     )
+    metodos = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=Metodo.objects.all(),
+        required=False
+    )
 
     class Meta:
         model = Frase
-        fields = ['id', 'categoriaFrase', 'tituloFrase', 'frase', 'modelos_laudo', 'usuario', 'criado_em', 'atualizado_em']
+        fields = [
+            'id', 'categoriaFrase', 'tituloFrase', 'frase',
+            'modelos_laudo', 'metodos', 'usuario', 'criado_em', 'atualizado_em',
+        ]
         read_only_fields = ['usuario', 'criado_em', 'atualizado_em']
 
 class VariavelSerializer(serializers.ModelSerializer):

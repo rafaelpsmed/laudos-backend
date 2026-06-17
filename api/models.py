@@ -34,6 +34,7 @@ class Frase(models.Model):
     tituloFrase = models.CharField(max_length=100)
     frase = models.JSONField()
     modelos_laudo = models.ManyToManyField(ModeloLaudo, blank=True)
+    metodos = models.ManyToManyField(Metodo, blank=True)
     usuario = models.ForeignKey(CustomUser, on_delete=models.CASCADE)
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
