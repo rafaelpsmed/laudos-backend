@@ -2,6 +2,7 @@ from django.shortcuts import render
 import logging
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
@@ -703,4 +704,52 @@ class IAViewSet(viewsets.ViewSet):
             return Response(
                 {'error': 'Erro interno do servidor ao corrigir texto'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'], parser_classes=[MultiPartParser, FormParser])
+    def transcrever_audio(self, request):
+        """
+        Transcreve áudio com Groq whisper-large-v3-turbo.
+        Motor paralelo ao Web Speech API (Google) do frontend.
+        """
+        audio = request.FILES.get('audio')
+        if not audio:
+            return Response(
+                {'error': 'Arquivo de áudio é obrigatório'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        max_bytes = 25 * 1024 * 1024
+        if audio.size > max_bytes:
+            return Response(
+                {'error': 'Áudio excede o limite de 25MB'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            groq_service = GroqService()
+            texto = groq_service.transcribe_audio(
+                audio.read(),
+                filename=audio.name or 'audio.webm',
+                content_type=audio.content_type or 'audio/webm',
+            )
+
+            if texto:
+                return Response({'texto': texto})
+
+            detail = groq_service.api_error_message()
+            return Response(
+                {'error': detail},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        except APIKeyMissingError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except Exception:
+            logger.exception("Erro ao transcrever áudio")
+            return Response(
+                {'error': 'Erro interno do servidor ao transcrever áudio'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

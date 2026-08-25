@@ -250,6 +250,7 @@ Regras:
 
         data = {
             "model": "openai/gpt-oss-120b",
+            # "model": "whisper-large-v3-turbo",
             "messages": [
                 {
                     "role": "system",
@@ -269,6 +270,51 @@ Regras:
         if response and 'choices' in response and len(response['choices']) > 0:
             return response['choices'][0]['message']['content'].strip()
         return None
+
+    def transcribe_audio(self, audio_bytes, filename="audio.webm", content_type="audio/webm"):
+        """
+        Transcreve áudio com Groq Whisper (whisper-large-v3-turbo).
+        Multipart separado do chat JSON — não usa a session com Content-Type application/json.
+        """
+        self.last_error = None
+        url = f"{self.base_url}/audio/transcriptions"
+        files = {
+            "file": (filename, audio_bytes, content_type or "application/octet-stream"),
+        }
+        data = {
+            "model": "whisper-large-v3-turbo",
+            "language": "pt",
+            "response_format": "json",
+            "temperature": "0",
+            "prompt": (
+                "Laudo radiológico em português. "
+                "fígado, pâncreas, baço, rim, pulmão, coração, vesícula biliar, "
+                "nódulo, cisto, lesão, calcificação, hipodenso, hiperdenso, "
+                "tomografia, ressonância, ultrassom, centímetros."
+            ),
+        }
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+
+        try:
+            response = requests.post(
+                url,
+                headers=headers,
+                files=files,
+                data=data,
+                timeout=120,
+            )
+            if response.status_code == 200:
+                payload = response.json()
+                texto = (payload.get("text") or "").strip()
+                return texto or None
+
+            self.last_error = f"HTTP {response.status_code}: {response.text[:500]}"
+            logger.warning("Falha na transcrição Groq Whisper: %s", self.last_error)
+            return None
+        except requests.RequestException as e:
+            self.last_error = str(e)
+            logger.exception("Erro na transcrição Groq Whisper")
+            return None
 
 
 def get_ai_service(service_name="openai"):
