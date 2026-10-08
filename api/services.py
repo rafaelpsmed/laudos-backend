@@ -717,6 +717,442 @@ REGRAS OBRIGATÓRIAS:
         return {'error': str(e)}
 
 
+def escolher_opcoes_frases(user_text, frases, service_name='openrouter'):
+    """
+    Escolhe opções já cadastradas a partir do que o médico falou.
+    Não inventa texto clínico: só devolve ids de campos/opções do payload.
+    """
+    if not isinstance(frases, list) or not frases:
+        return {'frases': []}
+
+    try:
+        service = get_ai_service(service_name)
+        if not isinstance(service, OpenRouterService):
+            raise ValueError(f"Serviço '{service_name}' não suporta chat multi-turn")
+
+        payload = json.dumps(frases, ensure_ascii=False, indent=2)
+        system_prompt = """Você preenche opções de frases de laudo a partir do que o médico falou.
+
+REGRAS:
+1. NÃO escreva laudo. Retorne APENAS JSON válido, sem markdown:
+{
+  "frases": [
+    {
+      "id": 123,
+      "escolhas": [
+        { "campo": "c0", "opcoes": ["o1"] },
+        { "campo": "c1", "opcoes": ["o0", "o2"] },
+        { "campo": "m0", "texto": "0,8 cm" }
+      ]
+    }
+  ]
+}
+2. Use somente ids de frase, campo e opção presentes no payload.
+3. tipo "unica" ou "grupo": no máximo uma opção, e só se o texto deixar claro.
+4. tipo "multipla": todas as opções claramente citadas; lista vazia se nenhuma.
+5. tipo "medida": "texto" com a medida dita (ex.: "0,8 cm"). Omita o campo se não houver medida.
+6. Se o texto não mencionar o campo, NÃO chute: omita esse campo.
+7. Uma fala pode cobrir várias frases; distribua cada trecho na frase certa."""
+
+        messages = [
+            {'role': 'system', 'content': system_prompt},
+            {
+                'role': 'user',
+                'content': (
+                    f"Frases e opções:\n{payload}\n\n"
+                    f"O que o médico falou:\n{user_text}\n\n"
+                    "Retorne o JSON das escolhas."
+                ),
+            },
+        ]
+        response = service.chat(messages, temperature=0.1)
+        if not response:
+            return {'error': service.api_error_message()}
+
+        parsed = _parse_llm_json(response)
+        if not parsed or not isinstance(parsed, dict):
+            return {'error': 'Resposta inválida da IA ao escolher opções.'}
+
+        valid_frases = {}
+        for frase in frases:
+            if not isinstance(frase, dict):
+                continue
+            try:
+                frase_id = int(frase.get('id'))
+            except (TypeError, ValueError):
+                continue
+            campos = {}
+            for campo in frase.get('campos') or []:
+                if not isinstance(campo, dict) or not campo.get('id'):
+                    continue
+                opcoes = {
+                    op.get('id')
+                    for op in (campo.get('opcoes') or [])
+                    if isinstance(op, dict) and op.get('id')
+                }
+                campos[campo['id']] = {
+                    'tipo': campo.get('tipo') or 'unica',
+                    'opcoes': opcoes,
+                }
+            valid_frases[frase_id] = campos
+
+        frases_ok = []
+        for item in parsed.get('frases') or []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                frase_id = int(item.get('id'))
+            except (TypeError, ValueError):
+                continue
+            if frase_id not in valid_frases:
+                continue
+            escolhas = []
+            for escolha in item.get('escolhas') or []:
+                if not isinstance(escolha, dict):
+                    continue
+                campo_id = escolha.get('campo')
+                campo = valid_frases[frase_id].get(campo_id)
+                if not campo:
+                    continue
+                if campo['tipo'] == 'medida':
+                    texto_medida = str(escolha.get('texto') or '').strip()
+                    if texto_medida:
+                        escolhas.append({'campo': campo_id, 'texto': texto_medida})
+                    continue
+                opcoes = [
+                    op for op in (escolha.get('opcoes') or [])
+                    if op in campo['opcoes']
+                ]
+                if campo['tipo'] != 'multipla':
+                    opcoes = opcoes[:1]
+                if opcoes:
+                    escolhas.append({'campo': campo_id, 'opcoes': opcoes})
+            frases_ok.append({'id': frase_id, 'escolhas': escolhas})
+
+        return {'frases': frases_ok}
+    except APIKeyMissingError as e:
+        return {'error': str(e)}
+    except Exception as e:
+        logger.exception('Erro ao escolher opções das frases')
+        return {'error': str(e)}
+
+
+def localizar_frases_no_laudo(paragrafos, frases, service_name='openrouter'):
+    """
+    Escolhe em qual parágrafo do corpo do laudo cada frase entra.
+    Não reescreve texto. Índice -1 = não identificado (inserir no início do laudo).
+    """
+    if not isinstance(frases, list) or not frases:
+        return {'frases': []}
+    if not isinstance(paragrafos, list) or not paragrafos:
+        return {'frases': [{'id': f.get('id'), 'paragrafo': -1} for f in frases if isinstance(f, dict)]}
+
+    try:
+        service = get_ai_service(service_name)
+        if not isinstance(service, OpenRouterService):
+            raise ValueError(f"Serviço '{service_name}' não suporta chat multi-turn")
+
+        lista = []
+        for i, texto in enumerate(paragrafos):
+            lista.append({'indice': i, 'texto': str(texto)[:400]})
+
+        system_prompt = """Você indica ONDE encaixar frases já escritas num laudo. Não reescreva nada.
+
+Retorne APENAS JSON:
+{
+  "frases": [
+    { "id": 123, "paragrafo": 2 }
+  ]
+}
+
+REGRAS:
+1. "paragrafo" é o índice do parágrafo que descreve o mesmo órgão ou estrutura da frase.
+   Ex.: cisto renal -> parágrafo dos rins; cálculo vesicular -> vesícula; esteatose -> fígado.
+2. A frase deve entrar junto desse parágrafo, não no lugar dele.
+3. Se nenhum parágrafo corresponder, use -1.
+4. Não invente índice. Use só os índices da lista.
+5. Não escreva texto de laudo."""
+
+        messages = [
+            {'role': 'system', 'content': system_prompt},
+            {
+                'role': 'user',
+                'content': (
+                    f"Parágrafos do laudo:\n{json.dumps(lista, ensure_ascii=False)}\n\n"
+                    f"Frases:\n{json.dumps(frases, ensure_ascii=False)}\n\n"
+                    "Retorne o JSON com o índice de cada frase."
+                ),
+            },
+        ]
+        response = service.chat(messages, temperature=0)
+        if not response:
+            return {'error': service.api_error_message()}
+
+        parsed = _parse_llm_json(response)
+        if not parsed or not isinstance(parsed, dict):
+            return {'error': 'Resposta inválida da IA ao localizar parágrafos.'}
+
+        max_idx = len(paragrafos) - 1
+        por_id = {}
+        for item in parsed.get('frases') or []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                frase_id = int(item.get('id'))
+                indice = int(item.get('paragrafo'))
+            except (TypeError, ValueError):
+                continue
+            if indice < 0 or indice > max_idx:
+                indice = -1
+            por_id[frase_id] = indice
+
+        saida = []
+        for frase in frases:
+            if not isinstance(frase, dict):
+                continue
+            try:
+                frase_id = int(frase.get('id'))
+            except (TypeError, ValueError):
+                continue
+            saida.append({'id': frase_id, 'paragrafo': por_id.get(frase_id, -1)})
+        return {'frases': saida}
+    except APIKeyMissingError as e:
+        return {'error': str(e)}
+    except Exception as e:
+        logger.exception('Erro ao localizar frases no laudo')
+        return {'error': str(e)}
+
+
+def complementar_laudo_estruturado(
+    linhas,
+    pedido,
+    frases_aplicadas=None,
+    historico=None,
+    service_name='openrouter',
+):
+    """
+    Produz os acréscimos do modo catálogo já posicionados:
+    cada item diz se substitui uma linha com '#', entra após uma linha
+    ou vai para a conclusão. Nunca reescreve o que já está no laudo.
+    """
+    pedido = (pedido or '').strip()
+    if not pedido:
+        return {'acrescimos': []}
+    if not isinstance(linhas, list) or not linhas:
+        return {'error': 'Laudo sem linhas para posicionar o complemento.'}
+
+    historico = normalize_chat_history(historico)
+    frases_aplicadas = [f for f in (frases_aplicadas or []) if f]
+
+    try:
+        service = get_ai_service(service_name)
+        if not isinstance(service, OpenRouterService):
+            raise ValueError(f"Serviço '{service_name}' não suporta chat multi-turn")
+
+        lista = [{'indice': i, 'texto': str(t)[:400]} for i, t in enumerate(linhas)]
+        frases_txt = ', '.join(frases_aplicadas) if frases_aplicadas else 'nenhuma'
+
+        system_prompt = f"""Sou Radiologista. Você complementa um laudo que já tem frases padronizadas inseridas.
+Sua tarefa é escrever SOMENTE o que ainda falta e dizer ONDE cada trecho entra.
+
+Contexto de formatação:
+{RADIOLOGY_REPORT_RULES}
+
+Retorne APENAS JSON válido, sem markdown:
+{{
+  "acrescimos": [
+    {{ "texto": "Rim Direito mede: 12,0 x 5,0 cm. Parênquima/Cortical: 1,5 cm.", "substitui_linha": 7, "apos_linha": -1, "conclusao": false }},
+    {{ "texto": "- Presença de lesão nodular hiperecogênica no segmento IV, medindo 1,1 cm, compatível com hemangioma.", "substitui_linha": -1, "apos_linha": 3, "conclusao": false }},
+    {{ "texto": "- Hemangioma hepático.", "substitui_linha": -1, "apos_linha": -1, "conclusao": true }}
+  ]
+}}
+
+REGRAS:
+1. As linhas do laudo estão numeradas. Linhas com "#" são campos a preencher (ex.: "Rim Direito mede: # cm").
+   Se o pedido traz esse dado, devolva a linha COMPLETA com os valores no lugar do "#", mantendo o texto original,
+   e informe o índice em "substitui_linha".
+2. Para um achado novo, escreva o parágrafo e informe em "apos_linha" o índice da linha que descreve o MESMO órgão
+   (ex.: hemangioma -> linha do fígado; cisto renal -> linha dos rins). Use -1 só se nenhuma linha corresponder.
+3. Todo achado novo relevante deve ter também um item com "conclusao": true (frase curta para a conclusão).
+   Itens de conclusão usam substitui_linha -1 e apos_linha -1.
+4. NÃO repita nem reescreva nada que já esteja no laudo. Não inclua os achados já cobertos por: {frases_txt}.
+5. Não altere linhas sem "#" — para elas use apenas "apos_linha".
+6. Use somente índices existentes na lista. Sem cabeçalhos, sem título, sem a palavra CONCLUSÃO.
+7. Medidas sempre com unidade uma única vez (ex.: "1,0 cm", nunca "1,0 cm cm").
+8. Se nada faltar, retorne {{"acrescimos": []}}."""
+
+        messages = [{'role': 'system', 'content': system_prompt}]
+        messages.extend(historico)
+        messages.append({
+            'role': 'user',
+            'content': (
+                f"Linhas do laudo atual:\n{json.dumps(lista, ensure_ascii=False)}\n\n"
+                f"Complemento solicitado pelo médico:\n{pedido}\n\n"
+                "Retorne o JSON com os acréscimos posicionados."
+            ),
+        })
+        response = service.chat(messages, temperature=0.1)
+        if not response:
+            return {'error': service.api_error_message()}
+
+        parsed = _parse_llm_json(response)
+        if not parsed or not isinstance(parsed, dict):
+            return {'error': 'Resposta inválida da IA ao complementar o laudo.'}
+
+        max_idx = len(linhas) - 1
+
+        def _idx(valor):
+            try:
+                i = int(valor)
+            except (TypeError, ValueError):
+                return -1
+            return i if 0 <= i <= max_idx else -1
+
+        acrescimos = []
+        for item in parsed.get('acrescimos') or []:
+            if not isinstance(item, dict):
+                continue
+            texto = str(item.get('texto') or '').strip()
+            if not texto:
+                continue
+            acrescimos.append({
+                'texto': texto,
+                'substitui_linha': _idx(item.get('substitui_linha')),
+                'apos_linha': _idx(item.get('apos_linha')),
+                'conclusao': bool(item.get('conclusao')),
+            })
+        return {'acrescimos': acrescimos}
+    except APIKeyMissingError as e:
+        return {'error': str(e)}
+    except Exception as e:
+        logger.exception('Erro ao complementar laudo (estruturado)')
+        return {'error': str(e)}
+
+
+REVISAO_TIPOS = {
+    'ortografia',
+    'concordancia',
+    'lateralidade',
+    'medida',
+    'duplicidade',
+    'inconsistencia',
+    'placeholder',
+    'outro',
+}
+
+# Tipos em que a IA só alerta: a decisão é do médico, nunca aplicar automaticamente.
+REVISAO_TIPOS_SEM_APLICAR = {'lateralidade', 'inconsistencia', 'duplicidade'}
+
+
+def revisar_laudo_estruturado(linhas, texto_ditado='', service_name='openrouter'):
+    """
+    Revisa o laudo linha a linha e devolve pendências pontuais
+    (ortografia, concordância, lateralidade, medidas, coerência descrição x conclusão).
+    Não reescreve o laudo: cada item traz trecho exato e sugestão.
+    """
+    if not isinstance(linhas, list) or not linhas:
+        return {'pendencias': []}
+
+    texto_ditado = (texto_ditado or '').strip()
+
+    try:
+        service = get_ai_service(service_name)
+        if not isinstance(service, OpenRouterService):
+            raise ValueError(f"Serviço '{service_name}' não suporta chat multi-turn")
+
+        lista = [{'indice': i, 'texto': str(t)[:600]} for i, t in enumerate(linhas)]
+
+        system_prompt = """Você revisa laudos radiológicos em português do Brasil. Você NÃO reescreve o laudo:
+aponta problemas pontuais, cada um com o trecho exato e a correção sugerida.
+
+Retorne APENAS JSON válido, sem markdown:
+{
+  "pendencias": [
+    {
+      "linha": 12,
+      "tipo": "concordancia",
+      "trecho": "Cisto renal simples à no rim direito",
+      "sugestao": "Cisto renal simples no rim direito",
+      "motivo": "\"à\" sem função antes de \"no\"."
+    }
+  ]
+}
+
+TIPOS permitidos: ortografia, concordancia, lateralidade, medida, duplicidade, inconsistencia, placeholder, outro.
+
+REGRAS:
+1. "trecho" deve ser cópia EXATA de um pedaço contíguo da linha indicada (mesmas letras, acentos e pontuação),
+   o menor possível que isole o problema. "sugestao" é o texto que substitui esse trecho.
+2. "linha" é o índice da lista fornecida. Não invente índices.
+3. lateralidade: descrição e conclusão citando lados diferentes para o mesmo achado, ou lado diferente do que o
+   médico ditou. Nesses casos "sugestao" pode ser vazia; descreva o conflito em "motivo". Não escolha o lado.
+4. inconsistencia: achado descrito no corpo sem conclusão correspondente, ou conclusão sem achado no corpo.
+   Marque a linha envolvida, "sugestao" vazia, explique em "motivo".
+5. duplicidade: mesmo achado descrito duas vezes. Marque a segunda ocorrência.
+6. medida: unidade repetida ("1,0 cm cm"), medida sem unidade, formato fora de "A x B cm".
+7. placeholder: restos como "#", "$", "{...}", "[LOCAL: ...]".
+8. NÃO aponte estilo, sinônimos, ordem de parágrafos nem frases padronizadas corretas. Não sugira reescrever.
+9. Terminologia radiológica consagrada não é erro (ex.: "ecotextura", "córtico-medular", "hepatocolédoco").
+10. Se não houver problemas, retorne {"pendencias": []}."""
+
+        conteudo = f"Linhas do laudo:\n{json.dumps(lista, ensure_ascii=False)}\n"
+        if texto_ditado:
+            conteudo += f"\nO que o médico ditou (para conferir lateralidade e achados):\n{texto_ditado}\n"
+        conteudo += "\nRetorne o JSON de pendências."
+
+        messages = [
+            {'role': 'system', 'content': system_prompt},
+            {'role': 'user', 'content': conteudo},
+        ]
+        response = service.chat(messages, temperature=0)
+        if not response:
+            return {'error': service.api_error_message()}
+
+        parsed = _parse_llm_json(response)
+        if not parsed or not isinstance(parsed, dict):
+            return {'error': 'Resposta inválida da IA ao revisar o laudo.'}
+
+        max_idx = len(linhas) - 1
+        pendencias = []
+        for item in parsed.get('pendencias') or []:
+            if not isinstance(item, dict):
+                continue
+            trecho = str(item.get('trecho') or '').strip()
+            motivo = str(item.get('motivo') or '').strip()
+            if not trecho and not motivo:
+                continue
+            try:
+                linha = int(item.get('linha'))
+            except (TypeError, ValueError):
+                linha = -1
+            if linha < 0 or linha > max_idx:
+                linha = -1
+            tipo = str(item.get('tipo') or 'outro').strip().lower()
+            if tipo not in REVISAO_TIPOS:
+                tipo = 'outro'
+            sugestao = str(item.get('sugestao') or '').strip()
+            # Só é aplicável se o trecho existir de fato na linha indicada.
+            existe = linha >= 0 and trecho and trecho in str(linhas[linha])
+            aplicavel = bool(
+                existe and sugestao and sugestao != trecho and tipo not in REVISAO_TIPOS_SEM_APLICAR
+            )
+            pendencias.append({
+                'linha': linha,
+                'tipo': tipo,
+                'trecho': trecho,
+                'sugestao': sugestao,
+                'motivo': motivo,
+                'aplicavel': aplicavel,
+                'origem': 'ia',
+            })
+        return {'pendencias': pendencias}
+    except APIKeyMissingError as e:
+        return {'error': str(e)}
+    except Exception as e:
+        logger.exception('Erro ao revisar laudo')
+        return {'error': str(e)}
+
+
 def validate_api_keys():
     """
     Valida se as chaves de API estão configuradas

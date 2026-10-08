@@ -20,6 +20,10 @@ from .services import (
     get_frases_for_modelo,
     build_frase_catalog_entry,
     match_frases_from_chat,
+    escolher_opcoes_frases,
+    localizar_frases_no_laudo,
+    complementar_laudo_estruturado,
+    revisar_laudo_estruturado,
 )
 from .models import ModeloLaudo
 
@@ -663,6 +667,106 @@ class IAViewSet(viewsets.ViewSet):
                 {'error': 'Erro interno ao interpretar frases'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+    @action(detail=False, methods=['post'])
+    def escolher_opcoes(self, request):
+        """
+        Marca opções cadastradas a partir do texto falado, sem abrir o modal.
+        """
+        texto = (request.data.get('texto') or '').strip()
+        frases = request.data.get('frases') or []
+
+        if not texto:
+            return Response(
+                {'error': 'Texto do pedido é obrigatório'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not isinstance(frases, list):
+            return Response(
+                {'error': 'frases deve ser uma lista'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        resultado = escolher_opcoes_frases(texto, frases, service_name='openrouter')
+        if resultado.get('error'):
+            return Response(
+                {'error': resultado['error']},
+                status=ia_error_http_status(resultado['error']),
+            )
+        return Response({'frases': resultado.get('frases', [])})
+
+    @action(detail=False, methods=['post'])
+    def localizar_frases(self, request):
+        """
+        Indica o parágrafo do laudo em que cada frase deve entrar.
+        """
+        paragrafos = request.data.get('paragrafos') or []
+        frases = request.data.get('frases') or []
+        if not isinstance(paragrafos, list) or not isinstance(frases, list):
+            return Response(
+                {'error': 'paragrafos e frases devem ser listas'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        resultado = localizar_frases_no_laudo(paragrafos, frases, service_name='openrouter')
+        if resultado.get('error'):
+            return Response(
+                {'error': resultado['error']},
+                status=ia_error_http_status(resultado['error']),
+            )
+        return Response({'frases': resultado.get('frases', [])})
+
+    @action(detail=False, methods=['post'])
+    def complementar_laudo(self, request):
+        """
+        Complemento do modo catálogo com posição: substitui linhas com '#',
+        insere após a linha do órgão ou manda para a conclusão.
+        """
+        linhas = request.data.get('linhas') or []
+        pedido = (request.data.get('pedido') or '').strip()
+        frases_aplicadas = request.data.get('frases_aplicadas') or []
+        historico = normalize_chat_history(request.data.get('historico'))
+        if not isinstance(linhas, list) or not pedido:
+            return Response(
+                {'error': 'linhas (lista) e pedido são obrigatórios'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        resultado = complementar_laudo_estruturado(
+            linhas,
+            pedido,
+            frases_aplicadas=frases_aplicadas,
+            historico=historico,
+            service_name='openrouter',
+        )
+        if resultado.get('error'):
+            return Response(
+                {'error': resultado['error']},
+                status=ia_error_http_status(resultado['error']),
+            )
+        return Response({'acrescimos': resultado.get('acrescimos', [])})
+
+    @action(detail=False, methods=['post'])
+    def revisar_laudo(self, request):
+        """
+        Revisão final: pendências pontuais (ortografia, concordância, lateralidade,
+        medidas, coerência). Não devolve o laudo reescrito.
+        """
+        linhas = request.data.get('linhas') or []
+        texto_ditado = (request.data.get('texto_ditado') or '').strip()
+        if not isinstance(linhas, list) or not linhas:
+            return Response(
+                {'error': 'linhas (lista não vazia) é obrigatório'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        resultado = revisar_laudo_estruturado(linhas, texto_ditado, service_name='openrouter')
+        if resultado.get('error'):
+            return Response(
+                {'error': resultado['error']},
+                status=ia_error_http_status(resultado['error']),
+            )
+        return Response({'pendencias': resultado.get('pendencias', [])})
 
     @action(detail=False, methods=['post'])
     def corrigir_texto(self, request):
